@@ -68,6 +68,8 @@ class QPUDevice(QVMDevice):
         compiler_url (str): the compiler server URL. Can also be set by the environment
             variable ``COMPILER_URL``, or in the ``~/.forest_config`` configuration file.
             Default value is ``"http://127.0.0.1:6000"``.
+        compiler_timeout (int): the time in seconds allowed to run on compiler before
+            resulting in a timeout. Default value is 100 seconds.
     """
     name = "Forest QPU Device"
     short_name = "forest.qpu"
@@ -96,10 +98,10 @@ class QPUDevice(QVMDevice):
 
         if load_qc:
             self.qc = get_qc(device, as_qvm=False, connection=self.connection)
-            self.qc.compiler.quilc_client.timeout = 100
+            self.qc.compiler.quilc_client.timeout = kwargs.pop("compiler_timeout", 100)
         else:
             self.qc = get_qc(device, as_qvm=True, connection=self.connection)
-            self.qc.compiler.client.timeout = 100
+            self.qc.compiler.client.timeout = kwargs.pop("compiler_timeout", 100)
 
         self.active_reset = active_reset
         self.symmetrize_readout = symmetrize_readout
