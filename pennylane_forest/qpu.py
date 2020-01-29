@@ -50,13 +50,6 @@ class QPUDevice(QVMDevice):
             evaluation when the number of shots is larger than ~1000.
         load_qc (bool): set to False to avoid getting the quantum computing
             device on initialization. This is convenient if not currently connected to the QPU.
-        readout_error (list): specifies the conditional probabilities [p(0|0), p(1|1)], where
-            p(i|j) denotes the prob of reading out i having sampled j; can be set to `None` if no
-            readout errors need to be simulated; can only be set for the QPU-as-a-QVM
-        symmetrize_readout (str): method to perform readout symmetrization, using exhaustive
-            symmetrization by default
-        calibrate_readout (str): method to perform calibration for readout error mitigation, normalizing
-            by the expectation value in the +1-eigenstate of the observable by default
         readout_mitigation (bool): sets whether to perform error mitigation
             against bit flips during readout
 
@@ -77,13 +70,7 @@ class QPUDevice(QVMDevice):
     short_name = "forest.qpu"
     observables = {"PauliX", "PauliY", "PauliZ", "Identity", "Hadamard", "Hermitian"}
 
-    def __init__(self, device, *, shots=1024, active_reset=True, load_qc=True, readout_error=None,
-                 symmetrize_readout="exhaustive", calibrate_readout="plus-eig", readout_mitigation=True, **kwargs):
-
-        if readout_error is not None and load_qc:
-            raise ValueError("Readout error cannot be set on the physical QPU")
-
-        self.readout_error = readout_error
+    def __init__(self, device, *, shots=1024, active_reset=True, load_qc=True, readout_mitigation=False, **kwargs):
 
         self._eigs = {}
 
@@ -106,8 +93,6 @@ class QPUDevice(QVMDevice):
             self.qc.compiler.client.timeout = kwargs.pop("compiler_timeout", 100)
 
         self.active_reset = active_reset
-        self.symmetrize_readout = symmetrize_readout
-        self.calibrate_readout = calibrate_readout
         self.wiring = {i: q for i, q in enumerate(self.qc.qubits())}
         
         self.readout_mitigation = readout_mitigation
@@ -157,56 +142,51 @@ class QPUDevice(QVMDevice):
         
         return p10, p01
         
-    def expval(self, observable):
+    def multiqubit_sample(self, observable):
         wires = observable.wires
-        # Single-qubit observable
-        if len(wires) == 1:
-            # identify Experiment Settings for each of the possible single-qubit observables
-            if isinstance(wires[0], int):
-                wire = wires[0]
-            else:
-                wire = wires[0][0]
+        name = observable.name
+
+#         if isinstance(name, str) and name in {"PauliX", "PauliY", "PauliZ", "Hadamard"}:
+#             # Process samples for observables with eigenvalues {1, -1}
+#             return 1 - 2 * self._samples[:, wires[0]]
+
+        # Replace the basis state in the computational basis with the correct eigenvalue.
+        # Extract only the columns of the basis samples required based on ``wires``.
+        wires = np.hstack(wires)
+        samples = self._samples[:, np.array(wires)]
+        return samples
+        
+    def expval(self, observable):
+
+        if self.readout_mitigation and observable.name[0] is not 'Identity':
+            samples = self.multiqubit_sample(observable)
             
-            qubit = self.wiring[wire]
-            d_expt_settings = {
-                "Identity": [ExperimentSetting(TensorProductState(), sI(qubit))],
-                "PauliX": [ExperimentSetting(TensorProductState(), sX(qubit))],
-                "PauliY": [ExperimentSetting(TensorProductState(), sY(qubit))],
-                "PauliZ": [ExperimentSetting(TensorProductState(), sZ(qubit))],
-                "Hadamard": [ExperimentSetting(TensorProductState(), float(np.sqrt(1/2)) * sX(qubit)),
-                             ExperimentSetting(TensorProductState(), float(np.sqrt(1/2)) * sZ(qubit))]
-            }
-            # expectation values for single-qubit observables
-            if observable.name in ["PauliX", "PauliY", "PauliZ", "Identity", "Hadamard"]:
-                prep_prog = Program()
-                for instr in self.program.instructions:
-                    if isinstance(instr, Gate):
-                        # split gate and wires -- assumes 1q and 2q gates
-                        tup_gate_wires = instr.out().split(' ')
-                        gate = tup_gate_wires[0]
-                        str_instr = str(gate)
-                        # map wires to qubits
-                        for w in tup_gate_wires[1:]:
-                            str_instr += f' {int(w)}'
-                        prep_prog += Program(str_instr)
-
-                if self.readout_error is not None:
-                    prep_prog.define_noisy_readout(qubit, p00=self.readout_error[0],
-                                                          p11=self.readout_error[1])
-
-                # All observables are rotated and can be measured in the PauliZ basis
-                tomo_expt = Experiment(settings=d_expt_settings["PauliZ"], program=prep_prog)
-                grouped_tomo_expt = group_experiments(tomo_expt)
-                meas_obs = list(measure_observables(self.qc, grouped_tomo_expt,
-                                                    active_reset=self.active_reset,
-                                                    symmetrize_readout=self.symmetrize_readout,
-                                                    calibrate_readout=self.calibrate_readout))
-                return np.sum([expt_result.expectation for expt_result in meas_obs])
-
-            elif observable.name == 'Hermitian':
-                # <H> = \sum_i w_i p_i
-                Hkey = tuple(par[0].flatten().tolist())
-                w = self._eigs[Hkey]['eigval']
-                return w[0]*p0 + w[1]*p1
-
+            if len(observable.wires) > 1:
+                samples = [tuple(s) for s in samples]
+                obs_wiring = {i: w[0] for i, w in enumerate(observable.wires)}
+            else:
+                samples = [int(s) for s in samples]
+                obs_wiring = {0: observable.wires[0]}
+            
+            from collections import Counter
+            
+            counts = Counter(samples)
+            
+            prod_sum = []
+            
+            for sample, count in counts.items():
+                p = count / self.shots
+                
+                pplus = self.p01 + self.p10
+                pminus = self.p01 - self.p10
+                
+                if len(observable.wires) > 1:
+                    prod = np.prod([((-1) ** s - pminus[obs_wiring[i]]) / (1 - pplus[obs_wiring[i]]) for i, s in enumerate(sample)])
+                else:
+                    prod = ((-1) ** sample - pminus[obs_wiring[0]]) / (1 - pplus[obs_wiring[0]])
+                
+                prod_sum.append(prod * p)
+                
+            return np.sum(prod_sum)#, super().expval(observable)
+                
         return super().expval(observable)
