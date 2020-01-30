@@ -19,21 +19,19 @@ Classes
 Code details
 ~~~~~~~~~~~~
 """
-import itertools
 import re
 
-import numpy as np
-
-from pennylane.variable import Variable
-from pennylane import DeviceError
 import networkx as nx
+
+from pennylane import DeviceError
+from pennylane.variable import Variable
 from pyquil import get_qc
 from pyquil.api._quantum_computer import _get_qvm_with_topology
 from pyquil.gates import MEASURE, RESET
 from pyquil.quil import Pragma, Program
 
-from .device import ForestDevice
 from ._version import __version__
+from .device import ForestDevice
 
 
 class QVMDevice(ForestDevice):
@@ -68,6 +66,8 @@ class QVMDevice(ForestDevice):
             variable ``COMPILER_URL``, or in the ``~/.forest_config`` configuration file.
             Default value is ``"http://127.0.0.1:6000"``.
         timeout (int): Number of seconds to wait for a response from the client.
+        parametric_compilation (bool): a boolean value of whether or not use parametric
+            compilation. It is True by default.
     """
     name = "Forest QVM Device"
     short_name = "forest.qvm"
@@ -86,7 +86,7 @@ class QVMDevice(ForestDevice):
         self.parametric_compilation = kwargs.get("parametric_compilation", True)
 
         if self.parametric_compilation:
-            self._lookup_table = {}
+            self._compiled_program_dict = {}
             """dict[int, pyquil.ExecutableDesignator]: stores circuit hashes associated
                 with the corresponding compiled programs."""
 
@@ -162,6 +162,9 @@ class QVMDevice(ForestDevice):
         self.prog.wrap_in_numshots_loop(self.shots)
 
     def apply_parametric_program(self, operations, **kwargs):
+        """Applies a parametric program by applying parametric
+        operation with symbolic parameters.
+        """
         # pylint: disable=attribute-defined-outside-init
         rotations = kwargs.get("rotations", [])
 
@@ -185,9 +188,9 @@ class QVMDevice(ForestDevice):
                     # corresponding symbolic parameter
                     parameter_string = "theta" + str(param.idx)
 
-                    # Create a new PyQuil memory reference and store it in the
-                    # parameter reference map if it was not done so already
                     if parameter_string not in self._parameter_map:
+                        # Create a new PyQuil memory reference and store it in the
+                        # parameter reference map if it was not done so already
                         current_ref = self.prog.declare(parameter_string, "REAL")
                         self._parameter_reference_map[parameter_string] = current_ref
 
@@ -207,19 +210,19 @@ class QVMDevice(ForestDevice):
     def generate_samples(self):
         if "pyqvm" in self.qc.name:
             return self.qc.run(self.prog, memory_map=self._parameter_map)
-        else:
+
+        if self.circuit_hash is None or not self.parametric_compilation:
             # No hash provided or parametric compilation was set to False
             # Will compile the program
-            if self.circuit_hash is None or not self.parametric_compilation:
-                compiled_program = self.qc.compile(self.prog)
+            compiled_program = self.qc.compile(self.prog)
 
+        elif self.circuit_hash not in self._compiled_program_dict:
             # Store the compiled program with the corresponding hash
-            elif self.circuit_hash not in self._lookup_table:
-                compiled_program = self.qc.compile(self.prog)
-                self._lookup_table[self.circuit_hash] = compiled_program
+            compiled_program = self.qc.compile(self.prog)
+            self._compiled_program_dict[self.circuit_hash] = compiled_program
 
+        else:
             # The program has been compiled already
-            else:
-                compiled_program = self._lookup_table[self.circuit_hash]
+            compiled_program = self._compiled_program_dict[self.circuit_hash]
 
-            return self.qc.run(executable=compiled_program, memory_map=self._parameter_map)
+        return self.qc.run(executable=compiled_program, memory_map=self._parameter_map)
