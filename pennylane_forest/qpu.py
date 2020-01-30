@@ -84,6 +84,14 @@ class QPUDevice(QVMDevice):
         self.readout_error = readout_error
 
         self._eigs = {}
+        self.parametric_compilation = kwargs.get("parametric_compilation", True)
+
+        if self.parametric_compilation:
+            self._lookup_table = {}
+            self._parameter_map = {}
+            self._parameter_reference_map = {}
+
+        timeout = kwargs.pop("timeout", None)
 
         if "wires" in kwargs:
             raise ValueError("QPU device does not support a wires parameter.")
@@ -98,10 +106,12 @@ class QPUDevice(QVMDevice):
 
         if load_qc:
             self.qc = get_qc(device, as_qvm=False, connection=self.connection)
-            self.qc.compiler.quilc_client.timeout = kwargs.pop("compiler_timeout", 100)
+            if timeout:
+                self.qc.compiler.quilc_client.timeout = timeout
         else:
             self.qc = get_qc(device, as_qvm=True, connection=self.connection)
-            self.qc.compiler.client.timeout = kwargs.pop("compiler_timeout", 100)
+            if timeout:
+                self.qc.compiler.client.timeout = timeout
 
         self.active_reset = active_reset
         self.symmetrize_readout = symmetrize_readout

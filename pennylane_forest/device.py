@@ -44,7 +44,7 @@ from pyquil.gates import X, Y, Z, H, PHASE, RX, RY, RZ, CZ, SWAP, CNOT
 # following gates are not supported by PennyLane
 from pyquil.gates import S, T, CPHASE00, CPHASE01, CPHASE10, CPHASE, CCNOT, CSWAP, ISWAP, PSWAP
 
-from pennylane import QubitDevice
+from pennylane import QubitDevice, DeviceError
 
 from ._version import __version__
 
@@ -251,19 +251,32 @@ class ForestDevice(QubitDevice):
             if i > 0 and operation.name in ("QubitStateVector", "BasisState"):
                 raise DeviceError("Operation {} cannot be used after other Operations have already been applied "
                                   "on a {} device.".format(operation.name, self.short_name))
-
             self.prog += self._operation_map[operation.name](*par, *wires)
 
-        # Apply the circuit rotations
+        self.prog += self.apply_rotations(rotations)
+
+    def apply_rotations(self, rotations):
+        """Apply the circuit rotations.
+
+        This method serves as an auxiliary method to :meth:`~.ForestDevice.apply`.
+
+        Args:
+            rotations (pennylane.Operation):
+        """
+        rotation_operations = Program()
         for operation in rotations:
             wires = self.remap_wires(operation.wires)
             par = operation.parameters
-            self.prog += self._operation_map[operation.name](*par, *wires)
+            rotation_operations += self._operation_map[operation.name](*par, *wires)
+
+        return rotation_operations
 
     def reset(self):
         self.prog = Program()
         self._active_wires = set()
         self._state = None
+        self._parameter_map = {}
+        self._parameter_reference_map = {}
 
     @property
     def operations(self):

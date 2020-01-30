@@ -2,6 +2,7 @@
 Unit tests for the QVM simulator device.
 """
 import logging
+import re
 
 import networkx as nx
 import pytest
@@ -10,6 +11,10 @@ import pennylane as qml
 from pennylane import numpy as np
 from pennylane.operation import Tensor
 from pennylane.circuit_graph import CircuitGraph
+from pennylane.variable import Variable
+
+from pyquil.quil import Pragma, Program
+from pyquil.api._quantum_computer import QuantumComputer
 
 from conftest import BaseTest
 from conftest import I, Z, H, U, U2, test_operation_map, QVM_SHOTS
@@ -22,7 +27,9 @@ from flaky import flaky
 
 log = logging.getLogger(__name__)
 
-VALID_QPU_LATTICES = [qc for qc in pyquil.list_quantum_computers() if "qvm" not in qc]
+# Creating pattern for devices that have at most 5 qubits
+pattern = 'Aspen-.-[1-5]Q-.'
+VALID_QPU_LATTICES = [qc for qc in pyquil.list_quantum_computers() if "qvm" not in qc and re.match(pattern, qc)]
 
 
 class TestQVMBasic(BaseTest):
@@ -52,7 +59,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
 
@@ -80,7 +87,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
 
@@ -110,7 +117,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
         # below are the analytic expectation values for this circuit
@@ -138,7 +145,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
 
@@ -167,7 +174,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
 
@@ -197,7 +204,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
 
@@ -240,7 +247,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = np.array([dev.expval(O1)])
         # below is the analytic expectation value for this circuit with arbitrary
@@ -275,7 +282,7 @@ class TestQVMBasic(BaseTest):
         # test correct variance for <Z> of a rotated state
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         var = np.array([dev.var(O1)])
         expected = 0.25 * (3 - np.cos(2 * theta) - 2 * np.cos(theta) ** 2 * np.cos(2 * phi))
@@ -304,7 +311,7 @@ class TestQVMBasic(BaseTest):
         # test correct variance for <A> of a rotated state
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         var = np.array([dev.var(O1)])
         expected = 0.5 * (
@@ -380,7 +387,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         res = dev.expval(obs)
         expected = np.vdot(state, np.kron(np.kron(Z, I), I) @ state)
@@ -407,7 +414,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         s1 = dev.sample(O1)
 
@@ -436,7 +443,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         s1 = dev.sample(O1)
 
@@ -480,7 +487,7 @@ class TestQVMBasic(BaseTest):
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
-        dev.generate_samples()
+        dev._samples = dev.generate_samples()
 
         s1 = dev.sample(O1)
 
@@ -494,6 +501,15 @@ class TestQVMBasic(BaseTest):
             + 5*np.cos(theta) - 6*np.cos(2*theta) + 27*np.cos(3*theta) + 6)/32
         assert np.allclose(np.mean(s1), expected, atol=0.1, rtol=0)
 
+    @pytest.mark.parametrize("shots", list(range(0,-10, -1)))
+    def test_raise_error_if_shots_is_not_positive(self, shots):
+        """Test that instantiating a QVMDevice if the number of shots is not a postivie
+        integer raises an error"""
+        with pytest.raises(
+            ValueError, match="Number of shots must be a positive integer."
+        ):
+            dev = plf.QVMDevice(device="2q-qvm", shots=shots)
+
     def test_raise_error_if_analytic_true(self, shots):
         """Test that instantiating a QVMDevice in analytic=True mode raises an error"""
         with pytest.raises(
@@ -501,6 +517,187 @@ class TestQVMBasic(BaseTest):
         ):
             dev = plf.QVMDevice(device="2q-qvm", shots=shots, analytic=True)
 
+    def test_raise_error_if_qubits_not_indicated(self, shots):
+        """Test that instantiating a QVMDevice if the number of qubits were not indicated
+        in the name raises an error"""
+        with pytest.raises(
+            ValueError, match="QVM device string does not indicate the number of qubits!"
+        ):
+            dev = plf.QVMDevice(device="-qvm", shots=shots)
+
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_timeout_set_correctly(self, shots, device):
+        """Test that the timeout attrbiute for the QuantumComputer stored by the QVMDevice
+        is set correctly when passing a value as keyword argument"""
+        dev = plf.QVMDevice(device=device, shots=shots, timeout=100)
+        assert dev.qc.compiler.client.timeout == 100
+
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_timeout_default(self, shots, device):
+        """Test that the timeout attrbiute for the QuantumComputer stored by the QVMDevice
+        is set correctly when passing a value as keyword argument"""
+        dev = plf.QVMDevice(device=device, shots=shots)
+        qc = pyquil.get_qc(device, as_qvm=True)
+
+        # Check that the timeouts are equal (it has not been changed as a side effect of
+        # instantiation
+        assert dev.qc.compiler.client.timeout == qc.compiler.client.timeout
+
+
+class TestParametricCompilation(BaseTest):
+    """Test that parametric compilation works fine and the same program only compiles once."""
+
+    def test_compiled_program_was_stored(self, qvm, monkeypatch):
+        """Test that QVM device stores the compiled program correctly"""
+        dev = qml.device("forest.qvm", device="2q-qvm")
+        theta = 0.432
+        phi = 0.123
+
+        O1 = qml.expval(qml.Identity(wires=[0]))
+        O2 = qml.expval(qml.Identity(wires=[1]))
+
+        circuit_graph = CircuitGraph([
+                                       qml.RX(theta, wires=[0]),
+                                       qml.RX(phi, wires=[1]),
+                                       qml.CNOT(wires=[0, 1])
+                                       ],
+                                         [
+                                        O1,
+                                        O2
+                                        ]
+                                    )
+
+        dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
+
+        dev._circuit_hash = circuit_graph.hash
+
+        call_history = []
+
+        with monkeypatch.context() as m:
+            m.setattr(QuantumComputer, "compile", lambda self, prog: call_history.append(prog))
+            m.setattr(QuantumComputer, "run", lambda self, **kwargs: None)
+            dev.generate_samples()
+
+        assert dev.circuit_hash in dev._lookup_table
+        assert len(dev._lookup_table.items()) == 1
+        assert len(call_history) == 1
+
+        # Testing that the compile() method was not called
+        # Calling generate_samples with unchanged hash
+        for i in range(6):
+            with monkeypatch.context() as m:
+                m.setattr(QuantumComputer, "compile", lambda self, prog: call_history.append(prog))
+                m.setattr(QuantumComputer, "run", lambda self, **kwargs: None)
+                dev.generate_samples()
+
+            assert dev.circuit_hash in dev._lookup_table
+            assert len(dev._lookup_table.items()) == 1
+            assert len(call_history) == 1
+
+    def test_circuit_hash_none_no_compiled_program_was_stored(self, qvm, monkeypatch):
+        """Test that QVM device does not store the compiled program if the _circuit_hash
+        attribute is None"""
+        dev = qml.device("forest.qvm", device="2q-qvm")
+        theta = 0.432
+        phi = 0.123
+
+        O1 = qml.expval(qml.Identity(wires=[0]))
+        O2 = qml.expval(qml.Identity(wires=[1]))
+
+        circuit_graph = CircuitGraph([
+                                       qml.RX(theta, wires=[0]),
+                                       qml.RX(phi, wires=[1]),
+                                       qml.CNOT(wires=[0, 1])
+                                       ],
+                                         [
+                                        O1,
+                                        O2
+                                        ]
+                                    )
+
+        dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
+
+        dev._circuit_hash = None
+
+        call_history = []
+
+        with monkeypatch.context() as m:
+            m.setattr(QuantumComputer, "compile", lambda self, prog: call_history.append(prog))
+            m.setattr(QuantumComputer, "run", lambda self, **kwargs: None)
+            dev.generate_samples()
+
+        assert dev.circuit_hash is None
+        assert len(dev._lookup_table.items()) == 0
+        assert len(call_history) == 1
+
+    variable1 = Variable(1)
+    variable2 = Variable(2)
+
+    multiple_symbolic_queue = [
+                        ([
+                            qml.RX(variable1, wires=[0]),
+                            qml.RX(variable2, wires=[1])
+                            ],
+                         []),
+                        ]
+
+    @pytest.mark.parametrize("queue, observable_queue", multiple_symbolic_queue)
+    def test_parametric_compilation_with_numeric_and_symbolic_queue(self, queue, observable_queue, monkeypatch):
+        """Tests that a program containing numeric and symbolic variables as well is only compiled once."""
+
+        Variable.free_param_values = {}
+        dev = qml.device("forest.qvm", device="2q-qvm", timeout=100)
+
+        dev._circuit_hash = None
+
+        number_of_runs = 10 
+
+        first = True
+
+        call_history = []
+        for run_idx in range(number_of_runs):
+            Variable.free_param_values[1] = 0.232 *run_idx
+            Variable.free_param_values[2] = 0.8764 *run_idx 
+            circuit_graph = CircuitGraph(queue,observable_queue)
+
+            dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
+
+            if first:
+                dev._circuit_hash = circuit_graph.hash
+                first = False
+            else:
+                # Check that we are still producing the same circuit hash
+                assert dev._circuit_hash == circuit_graph.hash
+
+
+            with monkeypatch.context() as m:
+                m.setattr(QuantumComputer, "compile", lambda self, prog: call_history.append(prog))
+                m.setattr(QuantumComputer, "run", lambda self, **kwargs: None)
+                dev.generate_samples()
+
+        assert len(dev._lookup_table.items()) == 1 
+        assert len(call_history) == 1
+
+    def test_apply_basis_state_raises_an_error_if_not_first(self):
+        """Test that there is an error raised when the BasisState is not
+        applied as the first operation."""
+        dev = qml.device("forest.qvm", device="3q-qvm", parametric_compilation=True)
+
+
+        operation = qml.BasisState(np.array([1,0,0]), wires=list(range(3)))
+        queue = [qml.PauliX(0), operation]
+        with pytest.raises(qml.DeviceError, match="Operation {} cannot be used after other Operations have already been applied".format(operation.name)):
+            dev.apply(queue)
+
+    def test_apply_qubitstatesvector_raises_an_error_if_not_first(self):
+        """Test that there is an error raised when the QubitStateVector is not
+        applied as the first operation."""
+        dev = qml.device("forest.qvm", device="2q-qvm", parametric_compilation=True)
+
+        operation = qml.QubitStateVector(np.array([1,0]), wires=list(range(2)))
+        queue = [qml.PauliX(0), operation]
+        with pytest.raises(qml.DeviceError, match="Operation {} cannot be used after other Operations have already been applied".format(operation.name)):
+            dev.apply(queue)
 
 class TestQVMIntegration(BaseTest):
     """Test the QVM simulator works correctly from the PennyLane frontend."""
@@ -574,7 +771,10 @@ class TestQVMIntegration(BaseTest):
     @flaky(max_runs=10, min_passes=1)
     @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
     def test_one_qubit_wavefunction_circuit(self, device, qvm, compiler):
-        """Test that the wavefunction plugin provides correct result for simple circuit"""
+        """Test that the wavefunction plugin provides correct result for simple circuit.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
         shots = 100000
         dev = qml.device("forest.qvm", device=device, shots=QVM_SHOTS)
 
@@ -594,7 +794,28 @@ class TestQVMIntegration(BaseTest):
 
     @flaky(max_runs=10, min_passes=1)
     @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_2q_gate(self, device, qvm, compiler):
+        """Test that the two qubit gate with the PauliZ observable works correctly.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+        dev = qml.device("forest.qvm", device=device, shots=QVM_SHOTS)
+
+        @qml.qnode(dev)
+        def circuit():
+            qml.RY(np.pi/2, wires=[0])
+            qml.CNOT(wires=[0, 1])
+            return qml.expval(qml.PauliZ(0) @ qml.Identity(1))
+
+        assert np.allclose(circuit(), 0.0, atol=2e-2)
+
+    @flaky(max_runs=10, min_passes=1)
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
     def test_2q_gate_pauliz_identity_tensor(self, device, qvm, compiler):
+        """Test that the PauliZ tensor Identity observable works correctly.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
         dev = qml.device("forest.qvm", device=device, shots=QVM_SHOTS)
 
         @qml.qnode(dev)
@@ -608,7 +829,166 @@ class TestQVMIntegration(BaseTest):
     @flaky(max_runs=10, min_passes=1)
     @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
     def test_2q_gate_pauliz_pauliz_tensor(self, device, qvm, compiler):
+        """Test that the PauliZ tensor PauliZ observable works correctly.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+
         dev = qml.device("forest.qvm", device=device, shots=QVM_SHOTS)
+
+        @qml.qnode(dev)
+        def circuit():
+            qml.Hadamard(0)
+            qml.CNOT(wires=[0, 1])
+            return qml.expval(qml.PauliZ(0) @ qml.PauliZ(1))
+
+        assert np.allclose(circuit(), 1.0, atol=2e-2)
+
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_compiled_program_was_stored(self, qvm, device):
+        """Test that QVM device stores the compiled program correctly"""
+        dev = qml.device("forest.qvm", device=device, timeout=100)
+
+        assert len(dev._lookup_table.items()) == 0
+
+        def circuit(params, wires):
+            qml.Hadamard(0)
+            qml.CNOT(wires=[0, 1])
+
+        obs = [qml.PauliZ(0) @ qml.PauliZ(1)]
+        obs_list = obs * 6
+
+        qnodes = qml.map(circuit, obs_list, dev)
+
+        qnodes([])
+        assert dev.circuit_hash in dev._lookup_table
+        assert len(dev._lookup_table.items()) == 1
+
+    @pytest.mark.parametrize("statements", [
+                                            [True, True, True, True, True, True],
+                                            [True, False, True, False, True, False],
+                                            [True, False, False, False, True, False],
+                                            [False, False, False, False, False, True],
+                                            [True, False, False, False, False, False],
+                                            [False, False, False, False, False, False],
+                                            ])
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_compiled_program_was_stored_mutable_qnode_with_if_statement(self, qvm, device, statements):
+        """Test that QVM device stores the compiled program when the QNode is mutated correctly"""
+        dev = qml.device("forest.qvm", device=device, timeout=100)
+
+        assert len(dev._lookup_table.items()) == 0
+
+        def circuit(params, wires, statement=None):
+            if statement:
+                qml.Hadamard(0)
+            qml.CNOT(wires=[0, 1])
+
+        obs = [qml.PauliZ(0) @ qml.PauliZ(1)]
+        obs_list = obs * 6
+
+        qnodes = qml.map(circuit, obs_list, dev)
+
+        for idx, stmt in enumerate(statements):
+            qnodes[idx]([], statement=stmt)
+            assert dev.circuit_hash in dev._lookup_table
+
+        # Using that True evaluates to 1
+        number_of_true = sum(statements)
+        length = 1 if (number_of_true == 6 or number_of_true == 0) else 2
+        assert len(dev._lookup_table.items()) == length
+
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_compiled_program_was_stored_mutable_qnode_with_loop(self, qvm, device):
+        """Test that QVM device stores the compiled program when the QNode is mutated correctly"""
+        dev = qml.device("forest.qvm", device=device, timeout=100)
+
+        assert len(dev._lookup_table.items()) == 0
+
+        def circuit(params, wires, rounds=1):
+            for i in range(rounds):
+                qml.Hadamard(0)
+                qml.CNOT(wires=[0, 1])
+
+        obs = [qml.PauliZ(0) @ qml.PauliZ(1)]
+        obs_list = obs * 6
+
+        qnodes = qml.map(circuit, obs_list, dev)
+
+        for idx, qnode in enumerate(qnodes):
+            qnode([], rounds=idx)
+            assert dev.circuit_hash in dev._lookup_table
+
+        assert len(dev._lookup_table.items()) == len(qnodes)
+
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_compiled_program_was_used(self, qvm, device, monkeypatch):
+        """Test that QVM device used the compiled program correctly, after it was stored"""
+        dev = qml.device("forest.qvm", device=device, timeout=100)
+
+        number_of_qnodes = 6
+        obs = [qml.PauliZ(0) @ qml.PauliZ(1)]
+        obs_list = obs * number_of_qnodes
+
+        qnodes = qml.map(qml.templates.StronglyEntanglingLayers, obs_list, dev)
+        params = qml.init.strong_ent_layers_normal(n_layers=4, n_wires=dev.num_wires)
+
+        # For the first evaluation, use the real compile method
+        qnodes[0](params)
+
+
+        call_history = []
+        with monkeypatch.context() as m:
+            m.setattr(QuantumComputer, "compile", lambda self, prog: call_history.append(prog))
+
+            for i in range(1,number_of_qnodes):
+                qnodes[i](params)
+
+        # Then use the mocked one to see if it was called
+
+        results = qnodes(params)
+
+        assert len(call_history) == 0
+        assert dev.circuit_hash in dev._lookup_table
+        assert len(dev._lookup_table.items()) == 1
+
+    @flaky(max_runs=5, min_passes=1)
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_compiled_program_was_correct_compared_with_default_qubit(self, qvm, device, tol):
+        """Test that QVM device stores the compiled program correctly by comparing it with default.qubit.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 5 runs was added.
+        """
+        number_of_qnodes = 6
+        obs = [qml.PauliZ(0) @ qml.PauliZ(1)]
+        obs_list = obs * number_of_qnodes
+
+        dev = qml.device("forest.qvm", device=device, timeout=100)
+        params = qml.init.strong_ent_layers_normal(n_layers=4, n_wires=dev.num_wires)
+
+        qnodes = qml.map(qml.templates.StronglyEntanglingLayers, obs_list, dev)
+
+        results = qnodes(params)
+
+        dev2 = qml.device("default.qubit", wires=dev.num_wires)
+        qnodes2 = qml.map(qml.templates.StronglyEntanglingLayers, obs_list, dev2)
+
+        results2 = qnodes2(params)
+
+        assert np.allclose(results, results2, atol=1e-02, rtol=0)
+        assert dev.circuit_hash in dev._lookup_table
+        assert len(dev._lookup_table.items()) == 1
+
+    @flaky(max_runs=10, min_passes=1)
+    @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
+    def test_2q_gate_pauliz_pauliz_tensor_parametric_compilation_off(self, device, qvm, compiler):
+        """Test that the PauliZ tensor PauliZ observable works correctly, when parametric compilation
+        was turned off.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+
+        dev = qml.device("forest.qvm", device=device, shots=QVM_SHOTS, parametric_compilation=False)
 
         @qml.qnode(dev)
         def circuit():

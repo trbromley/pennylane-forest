@@ -2,19 +2,21 @@
 Unit tests for the QPU device.
 """
 import logging
+import re
 
 import pytest
 import pyquil
 import pennylane as qml
 from pennylane import numpy as np
+import pennylane_forest as plf
 from conftest import BaseTest, QVM_SHOTS
 
 from flaky import flaky
 
 log = logging.getLogger(__name__)
 
-VALID_QPU_LATTICES = [qc for qc in pyquil.list_quantum_computers() if "qvm" not in qc]
-
+pattern = 'Aspen-.-[1-5]Q-.'
+VALID_QPU_LATTICES = [qc for qc in pyquil.list_quantum_computers() if "qvm" not in qc and re.match(pattern, qc)]
 
 class TestQPUIntegration(BaseTest):
     """Test the wavefunction simulator works correctly from the PennyLane frontend."""
@@ -57,6 +59,7 @@ class TestQPUBasic(BaseTest):
     # pylint: disable=protected-access
 
     def test_no_readout_correction(self):
+        """Test the QPU plugin with no readout correction"""
         device = np.random.choice(VALID_QPU_LATTICES)
         dev_qpu = qml.device('forest.qpu', device=device, load_qc=False, readout_error=[0.9, 0.75],
                             symmetrize_readout=None, calibrate_readout=None)
@@ -105,9 +108,10 @@ class TestQPUBasic(BaseTest):
         assert np.allclose(results[3:], -0.5, atol=2e-2)
 
     def test_readout_correction(self):
+        """Test the QPU plugin with readout correction"""
         device = np.random.choice(VALID_QPU_LATTICES)
         dev_qpu = qml.device('forest.qpu', device=device, load_qc=False, readout_error=[0.9, 0.75],
-                            symmetrize_readout="exhaustive", calibrate_readout="plus-eig")
+                            symmetrize_readout="exhaustive", calibrate_readout="plus-eig", timeout=100)
         qubit = 0   # just run program on the first qubit
 
         @qml.qnode(dev_qpu)
@@ -154,6 +158,11 @@ class TestQPUBasic(BaseTest):
 
     @flaky(max_runs=10, min_passes=1)
     def test_2q_gate(self):
+        """Test that the two qubit gate with the PauliZ observable works correctly.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+
         device = np.random.choice(VALID_QPU_LATTICES)
         dev_qpu = qml.device('forest.qpu', device=device, load_qc=False, readout_error=[0.9, 0.75],
                             symmetrize_readout="exhaustive", calibrate_readout="plus-eig", shots=QVM_SHOTS)
@@ -168,6 +177,11 @@ class TestQPUBasic(BaseTest):
 
     @flaky(max_runs=10, min_passes=1)
     def test_2q_gate_pauliz_identity_tensor(self):
+        """Test that the PauliZ tensor Identity observable works correctly.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+
         device = np.random.choice(VALID_QPU_LATTICES)
         dev_qpu = qml.device('forest.qpu', device=device, load_qc=False, readout_error=[0.9, 0.75],
                             symmetrize_readout="exhaustive", calibrate_readout="plus-eig", shots=QVM_SHOTS)
@@ -182,6 +196,11 @@ class TestQPUBasic(BaseTest):
 
     @flaky(max_runs=10, min_passes=1)
     def test_2q_gate_pauliz_pauliz_tensor(self):
+        """Test that the PauliZ tensor PauliZ observable works correctly.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+
         device = np.random.choice(VALID_QPU_LATTICES)
         dev_qpu = qml.device('forest.qpu', device=device, load_qc=False, readout_error=[0.9, 0.75],
                             symmetrize_readout="exhaustive", calibrate_readout="plus-eig", shots=QVM_SHOTS)
@@ -193,3 +212,44 @@ class TestQPUBasic(BaseTest):
             return qml.expval(qml.PauliZ(0) @ qml.PauliZ(1))
 
         assert np.allclose(circuit(), 1.0, atol=2e-2)
+
+    @flaky(max_runs=10, min_passes=1)
+    def test_2q_gate_pauliz_pauliz_tensor_parametric_compilation_off(self):
+        """Test that the PauliZ tensor PauliZ observable works correctly, when parametric compilation
+        was turned off.
+
+        As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
+        """
+
+        device = np.random.choice(VALID_QPU_LATTICES)
+        dev_qpu = qml.device('forest.qpu', device=device, load_qc=False, readout_error=[0.9, 0.75],
+                            symmetrize_readout="exhaustive", calibrate_readout="plus-eig", shots=QVM_SHOTS,
+                            parametric_compilation=False)
+
+        @qml.qnode(dev_qpu)
+        def circuit():
+            qml.Hadamard(0)
+            qml.CNOT(wires=[0, 1])
+            return qml.expval(qml.PauliZ(0) @ qml.PauliZ(1))
+
+        assert np.allclose(circuit(), 1.0, atol=2e-2)
+
+    def test_timeout_set_correctly(self, shots):
+        """Test that the timeout attrbiute for the QuantumComputer stored by the QVMDevice
+        is set correctly when passing a value as keyword argument"""
+        device = np.random.choice(VALID_QPU_LATTICES)
+        dev = plf.QVMDevice(device=device, shots=shots, timeout=100)
+        assert dev.qc.compiler.client.timeout == 100
+
+    def test_timeout_default(self, shots):
+        """Test that the timeout attrbiute for the QuantumComputer stored by the QVMDevice
+        is set correctly when passing a value as keyword argument"""
+        device = np.random.choice(VALID_QPU_LATTICES)
+        dev = plf.QVMDevice(device=device, shots=shots)
+        qc = pyquil.get_qc(device, as_qvm=True)
+
+        # Check that the timeouts are equal (it has not been changed as a side effect of
+        # instantiation
+        assert dev.qc.compiler.client.timeout == qc.compiler.client.timeout
+
+
