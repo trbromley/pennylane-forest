@@ -89,7 +89,7 @@ class QPUDevice(QVMDevice):
             self.qc = get_qc(device, as_qvm=False, connection=self.connection)
             self.qc.compiler.quilc_client.timeout = kwargs.pop("compiler_timeout", 100)
         else:
-            self.qc = get_qc(device, as_qvm=True, connection=self.connection)
+            self.qc = get_qc(device, as_qvm=True, connection=self.connection, noisy=True)
             self.qc.compiler.client.timeout = kwargs.pop("compiler_timeout", 100)
 
         self.active_reset = active_reset
