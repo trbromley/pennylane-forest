@@ -63,8 +63,9 @@ class QPUDevice(QVMDevice):
         compiler_url (str): the compiler server URL. Can also be set by the environment
             variable ``COMPILER_URL``, or in the ``~/.forest_config`` configuration file.
             Default value is ``"http://127.0.0.1:6000"``.
-        compiler_timeout (int): the time in seconds allowed to run on compiler before
-            resulting in a timeout. Default value is 100 seconds.
+        timeout (int): Number of seconds to wait for a response from the client.
+        parametric_compilation (bool): a boolean value of whether or not to use parametric
+            compilation. It is True by default.
     """
     name = "Forest QPU Device"
     short_name = "forest.qpu"
@@ -73,6 +74,28 @@ class QPUDevice(QVMDevice):
     def __init__(self, device, *, shots=1024, active_reset=True, load_qc=True, readout_mitigation=False, **kwargs):
 
         self._eigs = {}
+
+        self._compiled_program = None
+        """Union[None, pyquil.ExecutableDesignator]: the latest compiled program. If parametric
+        compilation is turned on, this will be a parametric program."""
+
+        self.parametric_compilation = kwargs.get("parametric_compilation", True)
+
+        if self.parametric_compilation:
+            self._compiled_program_dict = {}
+            """dict[int, pyquil.ExecutableDesignator]: stores circuit hashes associated
+                with the corresponding compiled programs."""
+
+            self._parameter_map = {}
+            """dict: stores the string of symbolic parameters associated with
+                their numeric values. This map will be used to bind parameters in a parametric
+                program using PyQuil."""
+
+            self._parameter_reference_map = {}
+            """dict: stores the string of symbolic parameters associated with
+                their PyQuil memory references."""
+
+        timeout = kwargs.pop("timeout", None)
 
         if "wires" in kwargs:
             raise ValueError("QPU device does not support a wires parameter.")
@@ -87,10 +110,13 @@ class QPUDevice(QVMDevice):
 
         if load_qc:
             self.qc = get_qc(device, as_qvm=False, connection=self.connection)
-            self.qc.compiler.quilc_client.timeout = kwargs.pop("compiler_timeout", 100)
+            if timeout is not None:
+                self.qc.compiler.quilc_client.timeout = timeout
         else:
-            self.qc = get_qc(device, as_qvm=True, connection=self.connection, noisy=True)
-            self.qc.compiler.client.timeout = kwargs.pop("compiler_timeout", 100)
+
+            self.qc = get_qc(device, as_qvm=True, connection=self.connection)
+            if timeout is not None:
+                self.qc.compiler.client.timeout = timeout
 
         self.active_reset = active_reset
         self.wiring = {i: q for i, q in enumerate(self.qc.qubits())}
