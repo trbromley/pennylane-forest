@@ -6,6 +6,7 @@ import re
 
 import networkx as nx
 import pytest
+import re
 
 import pennylane as qml
 from pennylane import numpy as np
@@ -30,6 +31,16 @@ log = logging.getLogger(__name__)
 # Creating pattern for devices that have at most 5 qubits
 pattern = 'Aspen-.-[1-5]Q-.'
 VALID_QPU_LATTICES = [qc for qc in pyquil.list_quantum_computers() if "qvm" not in qc and re.match(pattern, qc)]
+
+
+compiled_program = 'DECLARE ro BIT[2]\n'\
+                    'PRAGMA INITIAL_REWIRING "PARTIAL"\n'\
+                    'CZ 1 0\n'\
+                    'RZ(0.432) 1\n'\
+                    'MEASURE 1 ro[0]\n'\
+                    'MEASURE 0 ro[1]\n'\
+                    'HALT\n'
+
 
 
 class TestQVMBasic(BaseTest):
@@ -60,6 +71,7 @@ class TestQVMBasic(BaseTest):
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
 
         dev._samples = dev.generate_samples()
+
 
         res = np.array([dev.expval(O1), dev.expval(O2)])
 
@@ -543,13 +555,12 @@ class TestQVMBasic(BaseTest):
         # instantiation
         assert dev.qc.compiler.client.timeout == qc.compiler.client.timeout
 
-
-class TestParametricCompilation(BaseTest):
-    """Test that parametric compilation works fine and the same program only compiles once."""
-
-    def test_compiled_program_was_stored(self, qvm, monkeypatch):
-        """Test that QVM device stores the compiled program correctly"""
+    def test_compiled_program_stored(self, qvm, monkeypatch):
+        """Test that QVM device stores the latest compiled program."""
         dev = qml.device("forest.qvm", device="2q-qvm")
+
+        dev.compiled_program is None
+
         theta = 0.432
         phi = 0.123
 
@@ -565,6 +576,53 @@ class TestParametricCompilation(BaseTest):
                                         O1,
                                         O2
                                         ]
+                                    )
+
+        dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
+        dev.generate_samples()
+
+        dev.compiled_program is not None
+
+    def test_stored_compiled_program_correct(self, qvm, monkeypatch):
+        """Test that QVM device stores the latest compiled program."""
+        dev = qml.device("forest.qvm", device="2q-qvm")
+
+        dev.compiled_program is None
+
+        theta = 0.432
+
+        O1 = qml.expval(qml.PauliZ(wires=[0]))
+
+        circuit_graph = CircuitGraph([
+                                       qml.RZ(theta, wires=[0]),
+                                       qml.CZ(wires=[0, 1])
+                                       ],
+                                         [O1]
+                                    )
+
+        dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
+        dev.generate_samples()
+
+        dev.compiled_program.program == compiled_program
+
+class TestParametricCompilation(BaseTest):
+    """Test that parametric compilation works fine and the same program only compiles once."""
+
+    def test_compiled_program_was_stored_in_dict(self, qvm, monkeypatch):
+        """Test that QVM device stores the compiled program correctly in a dictionary"""
+        dev = qml.device("forest.qvm", device="2q-qvm")
+        theta = 0.432
+        phi = 0.123
+
+        O1 = qml.expval(qml.Identity(wires=[0]))
+        O2 = qml.expval(qml.Identity(wires=[1]))
+
+        circuit_graph = CircuitGraph([
+                                       qml.RX(theta, wires=[0]),
+                                       qml.RX(phi, wires=[1]),
+                                       qml.CNOT(wires=[0, 1])
+                                       ],
+                                         [O1,O2]
                                     )
 
         dev.apply(circuit_graph.operations, rotations=circuit_graph.diagonalizing_gates)
@@ -594,9 +652,9 @@ class TestParametricCompilation(BaseTest):
             assert len(dev._compiled_program_dict.items()) == 1
             assert len(call_history) == 1
 
-    def test_circuit_hash_none_no_compiled_program_was_stored(self, qvm, monkeypatch):
-        """Test that QVM device does not store the compiled program if the _circuit_hash
-        attribute is None"""
+    def test_circuit_hash_none_no_compiled_program_was_stored_in_dict(self, qvm, monkeypatch):
+        """Test that QVM device does not store the compiled program in a dictionary if the
+        _circuit_hash attribute is None"""
         dev = qml.device("forest.qvm", device="2q-qvm")
         theta = 0.432
         phi = 0.123
@@ -768,7 +826,7 @@ class TestQVMIntegration(BaseTest):
             circuit2(), np.vdot(out_state, obs @ out_state), delta=3 / np.sqrt(shots)
         )
 
-    @flaky(max_runs=5, min_passes=3)
+    @flaky(max_runs=5, min_passes=2)
     @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
     def test_one_qubit_wavefunction_circuit(self, device, qvm, compiler):
         """Test that the wavefunction plugin provides correct result for simple circuit.
@@ -833,7 +891,6 @@ class TestQVMIntegration(BaseTest):
 
         As the results coming from the qvm are stochastic, a constraint of 1 out of 10 runs was added.
         """
-
         dev = qml.device("forest.qvm", device=device, shots=QVM_SHOTS)
 
         @qml.qnode(dev)
@@ -892,9 +949,11 @@ class TestQVMIntegration(BaseTest):
         for idx, stmt in enumerate(statements):
             qnodes[idx]([], statement=stmt)
             assert dev.circuit_hash in dev._compiled_program_dict
+            print(dev.circuit_hash, dev._compiled_program_dict)
 
         # Using that True evaluates to 1
         number_of_true = sum(statements)
+
         # Checks if all elements in the list were either ``True`` or ``False``
         # In such a case we have compiled only one program
         length = 1 if (number_of_true == 6 or number_of_true == 0) else 2
@@ -903,7 +962,7 @@ class TestQVMIntegration(BaseTest):
     @pytest.mark.parametrize("device", ["2q-qvm", np.random.choice(VALID_QPU_LATTICES)])
     def test_compiled_program_was_stored_mutable_qnode_with_loop(self, qvm, device):
         """Test that QVM device stores the compiled program when the QNode is mutated correctly"""
-        dev = qml.device("forest.qvm", device=device, timeout=100)
+        dev = qml.device("forest.qvm", device=device, timeout=80)
 
         assert len(dev._compiled_program_dict.items()) == 0
 
